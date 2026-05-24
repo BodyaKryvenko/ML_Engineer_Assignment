@@ -4,3 +4,22 @@ CREATE TABLE IF NOT EXISTS users (
     balance INTEGER NOT NULL CHECK (balance >= 0),
     created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS transactions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sender_id INTEGER NOT NULL,
+    receiver_id INTEGER NOT NULL,
+    amount INTEGER NOT NULL CHECK (amount > 0),
+    currency TEXT NOT NULL DEFAULT 'EUR' CHECK (currency = 'EUR'),
+    status TEXT NOT NULL DEFAULT 'completed' CHECK (status = 'completed'),
+    created_at TEXT NOT NULL,
+    CHECK (sender_id <> receiver_id),
+    FOREIGN KEY (sender_id) REFERENCES users(id),
+    FOREIGN KEY (receiver_id) REFERENCES users(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_transactions_sender_created_at
+    ON transactions (sender_id, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_transactions_receiver_created_at
+    ON transactions (receiver_id, created_at);

@@ -165,6 +165,16 @@ $app->post('/transactions', function (Request $request, Response $response) use 
                 ->withStatus(422);
         }
 
+        $ruleHits = [];
+
+        if ($body['amount'] > 500000) {
+            $ruleHits[] = 'HIGH_AMOUNT';
+        }
+
+        if (in_array($body['amount'], [100000, 500000, 1000000], true)) {
+            $ruleHits[] = 'ROUND_AMOUNT';
+        }
+
         $statement = $database->prepare('UPDATE users SET balance = :balance WHERE id = :id');
         $statement->execute([
             'balance' => $sender['balance'] - $body['amount'],
@@ -176,8 +186,10 @@ $app->post('/transactions', function (Request $request, Response $response) use 
         ]);
 
         $statement = $database->prepare(
-            'INSERT INTO transactions (sender_id, receiver_id, amount, currency, status, created_at)
-             VALUES (:sender_id, :receiver_id, :amount, :currency, :status, :created_at)'
+            'INSERT INTO transactions
+                (sender_id, receiver_id, amount, currency, status, is_suspicious, rule_hits, created_at)
+             VALUES
+                (:sender_id, :receiver_id, :amount, :currency, :status, :is_suspicious, :rule_hits, :created_at)'
         );
         $statement->execute([
             'sender_id' => $body['sender_id'],
@@ -185,6 +197,8 @@ $app->post('/transactions', function (Request $request, Response $response) use 
             'amount' => $body['amount'],
             'currency' => 'EUR',
             'status' => 'completed',
+            'is_suspicious' => $ruleHits !== [] ? 1 : 0,
+            'rule_hits' => json_encode($ruleHits, JSON_THROW_ON_ERROR),
             'created_at' => gmdate('c'),
         ]);
 
@@ -199,16 +213,45 @@ $app->post('/transactions', function (Request $request, Response $response) use 
     }
 
     $statement = $database->prepare(
-        'SELECT id, sender_id, receiver_id, amount, currency, status, created_at
+        'SELECT id, sender_id, receiver_id, amount, currency, status, is_suspicious, rule_hits, created_at
          FROM transactions WHERE id = :id'
     );
     $statement->execute(['id' => $transactionId]);
+    $transaction = $statement->fetch();
+    $transaction['is_suspicious'] = (bool) $transaction['is_suspicious'];
+    $transaction['rule_hits'] = json_decode($transaction['rule_hits'], true, 512, JSON_THROW_ON_ERROR);
 
-    $response->getBody()->write(json_encode($statement->fetch(), JSON_THROW_ON_ERROR));
+    $response->getBody()->write(json_encode($transaction, JSON_THROW_ON_ERROR));
 
     return $response
         ->withHeader('Content-Type', 'application/json')
         ->withStatus(201);
+});
+
+$app->get('/transactions/{id:[0-9]+}', function (Request $request, Response $response, array $args) use ($database): Response {
+    $statement = $database->prepare(
+        'SELECT id, sender_id, receiver_id, amount, currency, status, is_suspicious, rule_hits, created_at
+         FROM transactions WHERE id = :id'
+    );
+    $statement->execute(['id' => (int) $args['id']]);
+    $transaction = $statement->fetch();
+
+    if ($transaction === false) {
+        $response->getBody()->write(json_encode([
+            'error' => 'transaction not found',
+        ], JSON_THROW_ON_ERROR));
+
+        return $response
+            ->withHeader('Content-Type', 'application/json')
+            ->withStatus(404);
+    }
+
+    $transaction['is_suspicious'] = (bool) $transaction['is_suspicious'];
+    $transaction['rule_hits'] = json_decode($transaction['rule_hits'], true, 512, JSON_THROW_ON_ERROR);
+
+    $response->getBody()->write(json_encode($transaction, JSON_THROW_ON_ERROR));
+
+    return $response->withHeader('Content-Type', 'application/json');
 });
 
 $app->get('/users/{id:[0-9]+}/transactions', function (Request $request, Response $response, array $args) use ($database): Response {
@@ -226,14 +269,21 @@ $app->get('/users/{id:[0-9]+}/transactions', function (Request $request, Respons
     }
 
     $statement = $database->prepare(
-        'SELECT id, sender_id, receiver_id, amount, currency, status, created_at
+        'SELECT id, sender_id, receiver_id, amount, currency, status, is_suspicious, rule_hits, created_at
          FROM transactions
          WHERE sender_id = :id OR receiver_id = :id
          ORDER BY created_at DESC, id DESC'
     );
     $statement->execute(['id' => (int) $args['id']]);
+    $transactions = $statement->fetchAll();
 
-    $response->getBody()->write(json_encode($statement->fetchAll(), JSON_THROW_ON_ERROR));
+    foreach ($transactions as &$transaction) {
+        $transaction['is_suspicious'] = (bool) $transaction['is_suspicious'];
+        $transaction['rule_hits'] = json_decode($transaction['rule_hits'], true, 512, JSON_THROW_ON_ERROR);
+    }
+    unset($transaction);
+
+    $response->getBody()->write(json_encode($transactions, JSON_THROW_ON_ERROR));
 
     return $response->withHeader('Content-Type', 'application/json');
 });

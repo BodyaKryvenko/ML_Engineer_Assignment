@@ -12,6 +12,8 @@ CREATE TABLE IF NOT EXISTS transactions (
     amount INTEGER NOT NULL CHECK (amount > 0),
     currency TEXT NOT NULL DEFAULT 'EUR' CHECK (currency = 'EUR'),
     status TEXT NOT NULL DEFAULT 'completed' CHECK (status = 'completed'),
+    is_suspicious INTEGER NOT NULL DEFAULT 0 CHECK (is_suspicious IN (0, 1)),
+    rule_hits TEXT NOT NULL DEFAULT '[]',
     created_at TEXT NOT NULL,
     CHECK (sender_id <> receiver_id),
     FOREIGN KEY (sender_id) REFERENCES users(id),

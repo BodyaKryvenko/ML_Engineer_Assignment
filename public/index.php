@@ -101,4 +101,141 @@ $app->get('/users/{id:[0-9]+}', function (Request $request, Response $response, 
     return $response->withHeader('Content-Type', 'application/json');
 });
 
+$app->post('/transactions', function (Request $request, Response $response) use ($database): Response {
+    $body = $request->getParsedBody();
+
+    if (
+        !is_array($body)
+        || !isset($body['sender_id'], $body['receiver_id'], $body['amount'], $body['currency'])
+        || !is_int($body['sender_id'])
+        || !is_int($body['receiver_id'])
+        || !is_int($body['amount'])
+        || $body['amount'] <= 0
+        || $body['currency'] !== 'EUR'
+    ) {
+        $response->getBody()->write(json_encode([
+            'error' => 'sender_id, receiver_id, positive integer amount and currency EUR are required',
+        ], JSON_THROW_ON_ERROR));
+
+        return $response
+            ->withHeader('Content-Type', 'application/json')
+            ->withStatus(422);
+    }
+
+    if ($body['sender_id'] === $body['receiver_id']) {
+        $response->getBody()->write(json_encode([
+            'error' => 'sender and receiver must be different users',
+        ], JSON_THROW_ON_ERROR));
+
+        return $response
+            ->withHeader('Content-Type', 'application/json')
+            ->withStatus(422);
+    }
+
+    $database->beginTransaction();
+
+    try {
+        $statement = $database->prepare('SELECT id, balance FROM users WHERE id = :id');
+        $statement->execute(['id' => $body['sender_id']]);
+        $sender = $statement->fetch();
+        $statement->execute(['id' => $body['receiver_id']]);
+        $receiver = $statement->fetch();
+
+        if ($sender === false || $receiver === false) {
+            $database->rollBack();
+
+            $response->getBody()->write(json_encode([
+                'error' => 'sender or receiver not found',
+            ], JSON_THROW_ON_ERROR));
+
+            return $response
+                ->withHeader('Content-Type', 'application/json')
+                ->withStatus(404);
+        }
+
+        if ($sender['balance'] < $body['amount']) {
+            $database->rollBack();
+
+            $response->getBody()->write(json_encode([
+                'error' => 'insufficient balance',
+            ], JSON_THROW_ON_ERROR));
+
+            return $response
+                ->withHeader('Content-Type', 'application/json')
+                ->withStatus(422);
+        }
+
+        $statement = $database->prepare('UPDATE users SET balance = :balance WHERE id = :id');
+        $statement->execute([
+            'balance' => $sender['balance'] - $body['amount'],
+            'id' => $body['sender_id'],
+        ]);
+        $statement->execute([
+            'balance' => $receiver['balance'] + $body['amount'],
+            'id' => $body['receiver_id'],
+        ]);
+
+        $statement = $database->prepare(
+            'INSERT INTO transactions (sender_id, receiver_id, amount, currency, status, created_at)
+             VALUES (:sender_id, :receiver_id, :amount, :currency, :status, :created_at)'
+        );
+        $statement->execute([
+            'sender_id' => $body['sender_id'],
+            'receiver_id' => $body['receiver_id'],
+            'amount' => $body['amount'],
+            'currency' => 'EUR',
+            'status' => 'completed',
+            'created_at' => gmdate('c'),
+        ]);
+
+        $transactionId = (int) $database->lastInsertId();
+        $database->commit();
+    } catch (Throwable $exception) {
+        if ($database->inTransaction()) {
+            $database->rollBack();
+        }
+
+        throw $exception;
+    }
+
+    $statement = $database->prepare(
+        'SELECT id, sender_id, receiver_id, amount, currency, status, created_at
+         FROM transactions WHERE id = :id'
+    );
+    $statement->execute(['id' => $transactionId]);
+
+    $response->getBody()->write(json_encode($statement->fetch(), JSON_THROW_ON_ERROR));
+
+    return $response
+        ->withHeader('Content-Type', 'application/json')
+        ->withStatus(201);
+});
+
+$app->get('/users/{id:[0-9]+}/transactions', function (Request $request, Response $response, array $args) use ($database): Response {
+    $statement = $database->prepare('SELECT id FROM users WHERE id = :id');
+    $statement->execute(['id' => (int) $args['id']]);
+
+    if ($statement->fetch() === false) {
+        $response->getBody()->write(json_encode([
+            'error' => 'user not found',
+        ], JSON_THROW_ON_ERROR));
+
+        return $response
+            ->withHeader('Content-Type', 'application/json')
+            ->withStatus(404);
+    }
+
+    $statement = $database->prepare(
+        'SELECT id, sender_id, receiver_id, amount, currency, status, created_at
+         FROM transactions
+         WHERE sender_id = :id OR receiver_id = :id
+         ORDER BY created_at DESC, id DESC'
+    );
+    $statement->execute(['id' => (int) $args['id']]);
+
+    $response->getBody()->write(json_encode($statement->fetchAll(), JSON_THROW_ON_ERROR));
+
+    return $response->withHeader('Content-Type', 'application/json');
+});
+
 $app->run();

@@ -1,0 +1,6 @@
+CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT NOT NULL UNIQUE,
+    balance INTEGER NOT NULL CHECK (balance >= 0),
+    created_at TEXT NOT NULL
+);

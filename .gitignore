@@ -1,6 +1,6 @@
 /vendor/
 /var/*.sqlite
+/.idea/
 /.phpunit.cache/
 /.phpunit.result.cache
 .DS_Store
-

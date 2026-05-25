@@ -9,7 +9,8 @@ use Slim\Factory\AppFactory;
 
 require dirname(__DIR__) . '/vendor/autoload.php';
 
-$database = Connection::create(dirname(__DIR__) . '/var/database.sqlite');
+$databasePath = getenv('DATABASE_PATH') ?: dirname(__DIR__) . '/var/database.sqlite';
+$database = Connection::create($databasePath);
 
 $app = AppFactory::create();
 $app->addBodyParsingMiddleware();

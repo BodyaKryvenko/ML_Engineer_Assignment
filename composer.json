@@ -1,6 +1,6 @@
 {
-    "name": "bogdankryvenko/transaction_monitoring_backend",
-    "description": "ML Engineer coding assignment",
+    "name": "bogdankryvenko/ml_engineer_coding_assignment",
+    "description": "Transaction monitoring backend",
     "type": "project",
     "license": "proprietary",
     "require": {
@@ -9,6 +9,9 @@
         "ext-pdo_sqlite": "*",
         "slim/psr7": "^1.7",
         "slim/slim": "^4.14"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^11.5"
     },
     "autoload": {
         "psr-4": {

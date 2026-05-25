@@ -179,6 +179,9 @@ $app->post('/transactions', function (Request $request, Response $response) use 
             $ruleHits[] = 'ROUND_AMOUNT';
         }
 
+        $senderBalanceAfter = $sender['balance'] - $body['amount'];
+        $receiverBalanceAfter = $receiver['balance'] + $body['amount'];
+
         $statement = $database->prepare('UPDATE users SET balance = balance - :amount WHERE id = :id');
         $statement->execute([
             'amount' => $body['amount'],
@@ -192,9 +195,11 @@ $app->post('/transactions', function (Request $request, Response $response) use 
 
         $statement = $database->prepare(
             'INSERT INTO transactions
-                (sender_id, receiver_id, amount, currency, status, is_suspicious, rule_hits, created_at)
+                (sender_id, receiver_id, amount, currency, status, sender_balance_before, sender_balance_after,
+                 receiver_balance_before, receiver_balance_after, is_suspicious, rule_hits, created_at)
              VALUES
-                (:sender_id, :receiver_id, :amount, :currency, :status, :is_suspicious, :rule_hits, :created_at)'
+                (:sender_id, :receiver_id, :amount, :currency, :status, :sender_balance_before, :sender_balance_after,
+                 :receiver_balance_before, :receiver_balance_after, :is_suspicious, :rule_hits, :created_at)'
         );
         $statement->execute([
             'sender_id' => $body['sender_id'],
@@ -202,6 +207,10 @@ $app->post('/transactions', function (Request $request, Response $response) use 
             'amount' => $body['amount'],
             'currency' => 'EUR',
             'status' => 'completed',
+            'sender_balance_before' => $sender['balance'],
+            'sender_balance_after' => $senderBalanceAfter,
+            'receiver_balance_before' => $receiver['balance'],
+            'receiver_balance_after' => $receiverBalanceAfter,
             'is_suspicious' => $ruleHits !== [] ? 1 : 0,
             'rule_hits' => json_encode($ruleHits, JSON_THROW_ON_ERROR),
             'created_at' => gmdate('c'),
@@ -219,7 +228,8 @@ $app->post('/transactions', function (Request $request, Response $response) use 
     }
 
     $statement = $database->prepare(
-        'SELECT id, sender_id, receiver_id, amount, currency, status, is_suspicious, rule_hits, created_at
+        'SELECT id, sender_id, receiver_id, amount, currency, status, sender_balance_before, sender_balance_after,
+                receiver_balance_before, receiver_balance_after, is_suspicious, rule_hits, created_at
          FROM transactions WHERE id = :id'
     );
     $statement->execute(['id' => $transactionId]);
@@ -236,7 +246,8 @@ $app->post('/transactions', function (Request $request, Response $response) use 
 
 $app->get('/transactions/{id:[0-9]+}', function (Request $request, Response $response, array $args) use ($database): Response {
     $statement = $database->prepare(
-        'SELECT id, sender_id, receiver_id, amount, currency, status, is_suspicious, rule_hits, created_at
+        'SELECT id, sender_id, receiver_id, amount, currency, status, sender_balance_before, sender_balance_after,
+                receiver_balance_before, receiver_balance_after, is_suspicious, rule_hits, created_at
          FROM transactions WHERE id = :id'
     );
     $statement->execute(['id' => (int) $args['id']]);
@@ -275,7 +286,8 @@ $app->get('/users/{id:[0-9]+}/transactions', function (Request $request, Respons
     }
 
     $statement = $database->prepare(
-        'SELECT id, sender_id, receiver_id, amount, currency, status, is_suspicious, rule_hits, created_at
+        'SELECT id, sender_id, receiver_id, amount, currency, status, sender_balance_before, sender_balance_after,
+                receiver_balance_before, receiver_balance_after, is_suspicious, rule_hits, created_at
          FROM transactions
          WHERE sender_id = :id OR receiver_id = :id
          ORDER BY created_at DESC, id DESC'

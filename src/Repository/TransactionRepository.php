@@ -10,7 +10,7 @@ final class TransactionRepository
 {
     private const COLUMNS = 'id, sender_id, receiver_id, amount, currency, status,
         sender_balance_before, sender_balance_after, receiver_balance_before, receiver_balance_after,
-        monitoring_status, is_suspicious, risk_score, model_version, rule_hits, created_at';
+        monitoring_status, monitoring_error, is_suspicious, risk_score, model_version, rule_hits, created_at';
 
     public function __construct(private readonly PDO $database)
     {
@@ -84,6 +84,7 @@ final class TransactionRepository
         $statement = $this->database->prepare(
             'UPDATE transactions
              SET monitoring_status = :monitoring_status,
+                 monitoring_error = NULL,
                  is_suspicious = :is_suspicious,
                  risk_score = :risk_score,
                  model_version = :model_version,
@@ -100,10 +101,33 @@ final class TransactionRepository
         ]);
     }
 
+    public function markMonitoringFailed(int $id): void
+    {
+        $statement = $this->database->prepare(
+            'UPDATE transactions
+             SET monitoring_status = :monitoring_status,
+                 monitoring_error = :monitoring_error,
+                 is_suspicious = NULL,
+                 risk_score = NULL,
+                 model_version = NULL,
+                 rule_hits = NULL
+             WHERE id = :id'
+        );
+        $statement->execute([
+            'monitoring_status' => 'failed',
+            'monitoring_error' => 'monitoring failed',
+            'id' => $id,
+        ]);
+    }
+
     private function formatTransaction(array $transaction): array
     {
-        $transaction['is_suspicious'] = (bool) $transaction['is_suspicious'];
-        $transaction['rule_hits'] = json_decode($transaction['rule_hits'], true, 512, JSON_THROW_ON_ERROR);
+        $transaction['is_suspicious'] = $transaction['is_suspicious'] === null
+            ? null
+            : (bool) $transaction['is_suspicious'];
+        $transaction['rule_hits'] = $transaction['rule_hits'] === null
+            ? null
+            : json_decode($transaction['rule_hits'], true, 512, JSON_THROW_ON_ERROR);
 
         return $transaction;
     }

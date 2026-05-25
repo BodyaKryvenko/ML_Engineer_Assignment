@@ -5,13 +5,17 @@ declare(strict_types=1);
 namespace App\Monitoring;
 
 use App\Event\TransactionCreated;
+use App\Repository\FeatureRepository;
 use App\Repository\TransactionRepository;
 use RuntimeException;
 
 final class MonitoringHandler
 {
-    public function __construct(private readonly TransactionRepository $transactions)
-    {
+    public function __construct(
+        private readonly TransactionRepository $transactions,
+        private readonly FeatureExtractor $featureExtractor,
+        private readonly FeatureRepository $features
+    ) {
     }
 
     public function __invoke(TransactionCreated $event): void
@@ -21,6 +25,9 @@ final class MonitoringHandler
         if ($transaction === null) {
             throw new RuntimeException('Transaction not found for monitoring.');
         }
+
+        $features = $this->featureExtractor->extract($transaction);
+        $this->features->save($features);
 
         $ruleHits = [];
 
@@ -35,4 +42,3 @@ final class MonitoringHandler
         $this->transactions->saveMonitoringResult($event->transactionId, $ruleHits);
     }
 }
-

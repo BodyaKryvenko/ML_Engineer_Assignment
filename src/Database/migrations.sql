@@ -32,3 +32,17 @@ CREATE INDEX IF NOT EXISTS idx_transactions_sender_created_at
 
 CREATE INDEX IF NOT EXISTS idx_transactions_receiver_created_at
     ON transactions (receiver_id, created_at);
+
+CREATE TABLE IF NOT EXISTS transaction_features (
+    transaction_id INTEGER PRIMARY KEY,
+    amount INTEGER NOT NULL,
+    hour_of_day INTEGER NOT NULL,
+    sender_balance_before INTEGER NOT NULL,
+    sender_balance_after INTEGER NOT NULL,
+    receiver_balance_before INTEGER NOT NULL,
+    sender_tx_count_last_hour INTEGER NOT NULL,
+    sender_tx_sum_last_24h INTEGER NOT NULL,
+    is_new_receiver INTEGER NOT NULL CHECK (is_new_receiver IN (0, 1)),
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (transaction_id) REFERENCES transactions(id)
+);

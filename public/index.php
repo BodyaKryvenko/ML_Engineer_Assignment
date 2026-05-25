@@ -132,7 +132,8 @@ $app->post('/transactions', function (Request $request, Response $response) use 
             ->withStatus(422);
     }
 
-    $database->beginTransaction();
+    $database->exec('BEGIN IMMEDIATE');
+    $transactionOpen = true;
 
     try {
         $statement = $database->prepare('SELECT id, balance FROM users WHERE id = :id');
@@ -142,7 +143,8 @@ $app->post('/transactions', function (Request $request, Response $response) use 
         $receiver = $statement->fetch();
 
         if ($sender === false || $receiver === false) {
-            $database->rollBack();
+            $database->exec('ROLLBACK');
+            $transactionOpen = false;
 
             $response->getBody()->write(json_encode([
                 'error' => 'sender or receiver not found',
@@ -154,7 +156,8 @@ $app->post('/transactions', function (Request $request, Response $response) use 
         }
 
         if ($sender['balance'] < $body['amount']) {
-            $database->rollBack();
+            $database->exec('ROLLBACK');
+            $transactionOpen = false;
 
             $response->getBody()->write(json_encode([
                 'error' => 'insufficient balance',
@@ -175,13 +178,14 @@ $app->post('/transactions', function (Request $request, Response $response) use 
             $ruleHits[] = 'ROUND_AMOUNT';
         }
 
-        $statement = $database->prepare('UPDATE users SET balance = :balance WHERE id = :id');
+        $statement = $database->prepare('UPDATE users SET balance = balance - :amount WHERE id = :id');
         $statement->execute([
-            'balance' => $sender['balance'] - $body['amount'],
+            'amount' => $body['amount'],
             'id' => $body['sender_id'],
         ]);
+        $statement = $database->prepare('UPDATE users SET balance = balance + :amount WHERE id = :id');
         $statement->execute([
-            'balance' => $receiver['balance'] + $body['amount'],
+            'amount' => $body['amount'],
             'id' => $body['receiver_id'],
         ]);
 
@@ -203,10 +207,11 @@ $app->post('/transactions', function (Request $request, Response $response) use 
         ]);
 
         $transactionId = (int) $database->lastInsertId();
-        $database->commit();
+        $database->exec('COMMIT');
+        $transactionOpen = false;
     } catch (Throwable $exception) {
-        if ($database->inTransaction()) {
-            $database->rollBack();
+        if ($transactionOpen) {
+            $database->exec('ROLLBACK');
         }
 
         throw $exception;

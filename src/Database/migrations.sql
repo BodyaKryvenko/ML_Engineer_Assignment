@@ -18,6 +18,8 @@ CREATE TABLE IF NOT EXISTS transactions (
     receiver_balance_after INTEGER NOT NULL CHECK (receiver_balance_after >= 0),
     is_suspicious INTEGER NOT NULL DEFAULT 0 CHECK (is_suspicious IN (0, 1)),
     rule_hits TEXT NOT NULL DEFAULT '[]',
+    idempotency_key TEXT UNIQUE,
+    request_hash TEXT,
     created_at TEXT NOT NULL,
     CHECK (sender_id <> receiver_id),
     FOREIGN KEY (sender_id) REFERENCES users(id),

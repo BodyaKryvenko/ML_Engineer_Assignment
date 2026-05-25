@@ -133,10 +133,69 @@ $app->post('/transactions', function (Request $request, Response $response) use 
             ->withStatus(422);
     }
 
+    $idempotencyKey = trim($request->getHeaderLine('Idempotency-Key'));
+    $idempotencyKey = $idempotencyKey === '' ? null : $idempotencyKey;
+
+    if ($idempotencyKey !== null && strlen($idempotencyKey) > 255) {
+        $response->getBody()->write(json_encode([
+            'error' => 'idempotency key must not be longer than 255 characters',
+        ], JSON_THROW_ON_ERROR));
+
+        return $response
+            ->withHeader('Content-Type', 'application/json')
+            ->withStatus(422);
+    }
+
+    $requestHash = $idempotencyKey === null ? null : hash('sha256', json_encode([
+        'sender_id' => $body['sender_id'],
+        'receiver_id' => $body['receiver_id'],
+        'amount' => $body['amount'],
+        'currency' => 'EUR',
+    ], JSON_THROW_ON_ERROR));
+
     $database->exec('BEGIN IMMEDIATE');
     $transactionOpen = true;
 
     try {
+        if ($idempotencyKey !== null) {
+            $statement = $database->prepare(
+                'SELECT id, sender_id, receiver_id, amount, currency, status, sender_balance_before,
+                        sender_balance_after, receiver_balance_before, receiver_balance_after, is_suspicious,
+                        rule_hits, request_hash, created_at
+                 FROM transactions WHERE idempotency_key = :idempotency_key'
+            );
+            $statement->execute(['idempotency_key' => $idempotencyKey]);
+            $existingTransaction = $statement->fetch();
+
+            if ($existingTransaction !== false) {
+                $database->exec('ROLLBACK');
+                $transactionOpen = false;
+
+                if (!hash_equals((string) $existingTransaction['request_hash'], (string) $requestHash)) {
+                    $response->getBody()->write(json_encode([
+                        'error' => 'idempotency key has already been used for another transaction',
+                    ], JSON_THROW_ON_ERROR));
+
+                    return $response
+                        ->withHeader('Content-Type', 'application/json')
+                        ->withStatus(409);
+                }
+
+                unset($existingTransaction['request_hash']);
+                $existingTransaction['is_suspicious'] = (bool) $existingTransaction['is_suspicious'];
+                $existingTransaction['rule_hits'] = json_decode(
+                    $existingTransaction['rule_hits'],
+                    true,
+                    512,
+                    JSON_THROW_ON_ERROR
+                );
+
+                $response->getBody()->write(json_encode($existingTransaction, JSON_THROW_ON_ERROR));
+
+                return $response->withHeader('Content-Type', 'application/json');
+            }
+        }
+
         $statement = $database->prepare('SELECT id, balance FROM users WHERE id = :id');
         $statement->execute(['id' => $body['sender_id']]);
         $sender = $statement->fetch();
@@ -196,10 +255,12 @@ $app->post('/transactions', function (Request $request, Response $response) use 
         $statement = $database->prepare(
             'INSERT INTO transactions
                 (sender_id, receiver_id, amount, currency, status, sender_balance_before, sender_balance_after,
-                 receiver_balance_before, receiver_balance_after, is_suspicious, rule_hits, created_at)
+                 receiver_balance_before, receiver_balance_after, is_suspicious, rule_hits, idempotency_key,
+                 request_hash, created_at)
              VALUES
                 (:sender_id, :receiver_id, :amount, :currency, :status, :sender_balance_before, :sender_balance_after,
-                 :receiver_balance_before, :receiver_balance_after, :is_suspicious, :rule_hits, :created_at)'
+                 :receiver_balance_before, :receiver_balance_after, :is_suspicious, :rule_hits, :idempotency_key,
+                 :request_hash, :created_at)'
         );
         $statement->execute([
             'sender_id' => $body['sender_id'],
@@ -213,6 +274,8 @@ $app->post('/transactions', function (Request $request, Response $response) use 
             'receiver_balance_after' => $receiverBalanceAfter,
             'is_suspicious' => $ruleHits !== [] ? 1 : 0,
             'rule_hits' => json_encode($ruleHits, JSON_THROW_ON_ERROR),
+            'idempotency_key' => $idempotencyKey,
+            'request_hash' => $requestHash,
             'created_at' => gmdate('c'),
         ]);
 

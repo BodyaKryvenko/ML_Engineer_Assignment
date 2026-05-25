@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use App\Database\Connection;
+use App\Repository\TransactionRepository;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 use Slim\Factory\AppFactory;
@@ -11,6 +12,7 @@ require dirname(__DIR__) . '/vendor/autoload.php';
 
 $databasePath = getenv('DATABASE_PATH') ?: dirname(__DIR__) . '/var/database.sqlite';
 $database = Connection::create($databasePath);
+$transactions = new TransactionRepository($database);
 
 $app = AppFactory::create();
 $app->addBodyParsingMiddleware();
@@ -102,7 +104,7 @@ $app->get('/users/{id:[0-9]+}', function (Request $request, Response $response, 
     return $response->withHeader('Content-Type', 'application/json');
 });
 
-$app->post('/transactions', function (Request $request, Response $response) use ($database): Response {
+$app->post('/transactions', function (Request $request, Response $response) use ($database, $transactions): Response {
     $body = $request->getParsedBody();
 
     if (
@@ -158,16 +160,9 @@ $app->post('/transactions', function (Request $request, Response $response) use 
 
     try {
         if ($idempotencyKey !== null) {
-            $statement = $database->prepare(
-                'SELECT id, sender_id, receiver_id, amount, currency, status, sender_balance_before,
-                        sender_balance_after, receiver_balance_before, receiver_balance_after, is_suspicious,
-                        rule_hits, request_hash, created_at
-                 FROM transactions WHERE idempotency_key = :idempotency_key'
-            );
-            $statement->execute(['idempotency_key' => $idempotencyKey]);
-            $existingTransaction = $statement->fetch();
+            $existingTransaction = $transactions->findByIdempotencyKey($idempotencyKey);
 
-            if ($existingTransaction !== false) {
+            if ($existingTransaction !== null) {
                 $database->exec('ROLLBACK');
                 $transactionOpen = false;
 
@@ -182,13 +177,6 @@ $app->post('/transactions', function (Request $request, Response $response) use 
                 }
 
                 unset($existingTransaction['request_hash']);
-                $existingTransaction['is_suspicious'] = (bool) $existingTransaction['is_suspicious'];
-                $existingTransaction['rule_hits'] = json_decode(
-                    $existingTransaction['rule_hits'],
-                    true,
-                    512,
-                    JSON_THROW_ON_ERROR
-                );
 
                 $response->getBody()->write(json_encode($existingTransaction, JSON_THROW_ON_ERROR));
 
@@ -252,17 +240,7 @@ $app->post('/transactions', function (Request $request, Response $response) use 
             'id' => $body['receiver_id'],
         ]);
 
-        $statement = $database->prepare(
-            'INSERT INTO transactions
-                (sender_id, receiver_id, amount, currency, status, sender_balance_before, sender_balance_after,
-                 receiver_balance_before, receiver_balance_after, is_suspicious, rule_hits, idempotency_key,
-                 request_hash, created_at)
-             VALUES
-                (:sender_id, :receiver_id, :amount, :currency, :status, :sender_balance_before, :sender_balance_after,
-                 :receiver_balance_before, :receiver_balance_after, :is_suspicious, :rule_hits, :idempotency_key,
-                 :request_hash, :created_at)'
-        );
-        $statement->execute([
+        $transactionId = $transactions->create([
             'sender_id' => $body['sender_id'],
             'receiver_id' => $body['receiver_id'],
             'amount' => $body['amount'],
@@ -279,7 +257,6 @@ $app->post('/transactions', function (Request $request, Response $response) use 
             'created_at' => gmdate('c'),
         ]);
 
-        $transactionId = (int) $database->lastInsertId();
         $database->exec('COMMIT');
         $transactionOpen = false;
     } catch (Throwable $exception) {
@@ -290,15 +267,7 @@ $app->post('/transactions', function (Request $request, Response $response) use 
         throw $exception;
     }
 
-    $statement = $database->prepare(
-        'SELECT id, sender_id, receiver_id, amount, currency, status, sender_balance_before, sender_balance_after,
-                receiver_balance_before, receiver_balance_after, is_suspicious, rule_hits, created_at
-         FROM transactions WHERE id = :id'
-    );
-    $statement->execute(['id' => $transactionId]);
-    $transaction = $statement->fetch();
-    $transaction['is_suspicious'] = (bool) $transaction['is_suspicious'];
-    $transaction['rule_hits'] = json_decode($transaction['rule_hits'], true, 512, JSON_THROW_ON_ERROR);
+    $transaction = $transactions->find($transactionId);
 
     $response->getBody()->write(json_encode($transaction, JSON_THROW_ON_ERROR));
 
@@ -307,16 +276,10 @@ $app->post('/transactions', function (Request $request, Response $response) use 
         ->withStatus(201);
 });
 
-$app->get('/transactions/{id:[0-9]+}', function (Request $request, Response $response, array $args) use ($database): Response {
-    $statement = $database->prepare(
-        'SELECT id, sender_id, receiver_id, amount, currency, status, sender_balance_before, sender_balance_after,
-                receiver_balance_before, receiver_balance_after, is_suspicious, rule_hits, created_at
-         FROM transactions WHERE id = :id'
-    );
-    $statement->execute(['id' => (int) $args['id']]);
-    $transaction = $statement->fetch();
+$app->get('/transactions/{id:[0-9]+}', function (Request $request, Response $response, array $args) use ($transactions): Response {
+    $transaction = $transactions->find((int) $args['id']);
 
-    if ($transaction === false) {
+    if ($transaction === null) {
         $response->getBody()->write(json_encode([
             'error' => 'transaction not found',
         ], JSON_THROW_ON_ERROR));
@@ -326,15 +289,12 @@ $app->get('/transactions/{id:[0-9]+}', function (Request $request, Response $res
             ->withStatus(404);
     }
 
-    $transaction['is_suspicious'] = (bool) $transaction['is_suspicious'];
-    $transaction['rule_hits'] = json_decode($transaction['rule_hits'], true, 512, JSON_THROW_ON_ERROR);
-
     $response->getBody()->write(json_encode($transaction, JSON_THROW_ON_ERROR));
 
     return $response->withHeader('Content-Type', 'application/json');
 });
 
-$app->get('/users/{id:[0-9]+}/transactions', function (Request $request, Response $response, array $args) use ($database): Response {
+$app->get('/users/{id:[0-9]+}/transactions', function (Request $request, Response $response, array $args) use ($database, $transactions): Response {
     $statement = $database->prepare('SELECT id FROM users WHERE id = :id');
     $statement->execute(['id' => (int) $args['id']]);
 
@@ -348,23 +308,9 @@ $app->get('/users/{id:[0-9]+}/transactions', function (Request $request, Respons
             ->withStatus(404);
     }
 
-    $statement = $database->prepare(
-        'SELECT id, sender_id, receiver_id, amount, currency, status, sender_balance_before, sender_balance_after,
-                receiver_balance_before, receiver_balance_after, is_suspicious, rule_hits, created_at
-         FROM transactions
-         WHERE sender_id = :id OR receiver_id = :id
-         ORDER BY created_at DESC, id DESC'
-    );
-    $statement->execute(['id' => (int) $args['id']]);
-    $transactions = $statement->fetchAll();
+    $history = $transactions->findForUser((int) $args['id']);
 
-    foreach ($transactions as &$transaction) {
-        $transaction['is_suspicious'] = (bool) $transaction['is_suspicious'];
-        $transaction['rule_hits'] = json_decode($transaction['rule_hits'], true, 512, JSON_THROW_ON_ERROR);
-    }
-    unset($transaction);
-
-    $response->getBody()->write(json_encode($transactions, JSON_THROW_ON_ERROR));
+    $response->getBody()->write(json_encode($history, JSON_THROW_ON_ERROR));
 
     return $response->withHeader('Content-Type', 'application/json');
 });

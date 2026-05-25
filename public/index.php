@@ -3,6 +3,9 @@
 declare(strict_types=1);
 
 use App\Database\Connection;
+use App\Event\SyncEventDispatcher;
+use App\Event\TransactionCreated;
+use App\Monitoring\MonitoringHandler;
 use App\Repository\TransactionRepository;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
@@ -13,6 +16,7 @@ require dirname(__DIR__) . '/vendor/autoload.php';
 $databasePath = getenv('DATABASE_PATH') ?: dirname(__DIR__) . '/var/database.sqlite';
 $database = Connection::create($databasePath);
 $transactions = new TransactionRepository($database);
+$events = new SyncEventDispatcher(new MonitoringHandler($transactions));
 
 $app = AppFactory::create();
 $app->addBodyParsingMiddleware();
@@ -104,7 +108,7 @@ $app->get('/users/{id:[0-9]+}', function (Request $request, Response $response, 
     return $response->withHeader('Content-Type', 'application/json');
 });
 
-$app->post('/transactions', function (Request $request, Response $response) use ($database, $transactions): Response {
+$app->post('/transactions', function (Request $request, Response $response) use ($database, $transactions, $events): Response {
     $body = $request->getParsedBody();
 
     if (
@@ -216,16 +220,6 @@ $app->post('/transactions', function (Request $request, Response $response) use 
                 ->withStatus(422);
         }
 
-        $ruleHits = [];
-
-        if ($body['amount'] > 500000) {
-            $ruleHits[] = 'HIGH_AMOUNT';
-        }
-
-        if (in_array($body['amount'], [100000, 500000, 1000000], true)) {
-            $ruleHits[] = 'ROUND_AMOUNT';
-        }
-
         $senderBalanceAfter = $sender['balance'] - $body['amount'];
         $receiverBalanceAfter = $receiver['balance'] + $body['amount'];
 
@@ -250,8 +244,6 @@ $app->post('/transactions', function (Request $request, Response $response) use 
             'sender_balance_after' => $senderBalanceAfter,
             'receiver_balance_before' => $receiver['balance'],
             'receiver_balance_after' => $receiverBalanceAfter,
-            'is_suspicious' => $ruleHits !== [] ? 1 : 0,
-            'rule_hits' => json_encode($ruleHits, JSON_THROW_ON_ERROR),
             'idempotency_key' => $idempotencyKey,
             'request_hash' => $requestHash,
             'created_at' => gmdate('c'),
@@ -267,6 +259,7 @@ $app->post('/transactions', function (Request $request, Response $response) use 
         throw $exception;
     }
 
+    $events->dispatch(new TransactionCreated($transactionId));
     $transaction = $transactions->find($transactionId);
 
     $response->getBody()->write(json_encode($transaction, JSON_THROW_ON_ERROR));

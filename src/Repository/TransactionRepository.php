@@ -10,7 +10,7 @@ final class TransactionRepository
 {
     private const COLUMNS = 'id, sender_id, receiver_id, amount, currency, status,
         sender_balance_before, sender_balance_after, receiver_balance_before, receiver_balance_after,
-        is_suspicious, rule_hits, created_at';
+        monitoring_status, is_suspicious, rule_hits, created_at';
 
     public function __construct(private readonly PDO $database)
     {
@@ -21,12 +21,10 @@ final class TransactionRepository
         $statement = $this->database->prepare(
             'INSERT INTO transactions
                 (sender_id, receiver_id, amount, currency, status, sender_balance_before, sender_balance_after,
-                 receiver_balance_before, receiver_balance_after, is_suspicious, rule_hits, idempotency_key,
-                 request_hash, created_at)
+                 receiver_balance_before, receiver_balance_after, idempotency_key, request_hash, created_at)
              VALUES
                 (:sender_id, :receiver_id, :amount, :currency, :status, :sender_balance_before, :sender_balance_after,
-                 :receiver_balance_before, :receiver_balance_after, :is_suspicious, :rule_hits, :idempotency_key,
-                 :request_hash, :created_at)'
+                 :receiver_balance_before, :receiver_balance_after, :idempotency_key, :request_hash, :created_at)'
         );
         $statement->execute($transaction);
 
@@ -73,6 +71,23 @@ final class TransactionRepository
         }
 
         return $transactions;
+    }
+
+    public function saveMonitoringResult(int $id, array $ruleHits): void
+    {
+        $statement = $this->database->prepare(
+            'UPDATE transactions
+             SET monitoring_status = :monitoring_status,
+                 is_suspicious = :is_suspicious,
+                 rule_hits = :rule_hits
+             WHERE id = :id'
+        );
+        $statement->execute([
+            'monitoring_status' => 'completed',
+            'is_suspicious' => $ruleHits !== [] ? 1 : 0,
+            'rule_hits' => json_encode($ruleHits, JSON_THROW_ON_ERROR),
+            'id' => $id,
+        ]);
     }
 
     private function formatTransaction(array $transaction): array

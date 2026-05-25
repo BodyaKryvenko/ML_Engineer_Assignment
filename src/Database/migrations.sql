@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS transactions (
     sender_balance_after INTEGER NOT NULL CHECK (sender_balance_after >= 0),
     receiver_balance_before INTEGER NOT NULL CHECK (receiver_balance_before >= 0),
     receiver_balance_after INTEGER NOT NULL CHECK (receiver_balance_after >= 0),
+    monitoring_status TEXT NOT NULL DEFAULT 'pending' CHECK (monitoring_status IN ('pending', 'completed')),
     is_suspicious INTEGER NOT NULL DEFAULT 0 CHECK (is_suspicious IN (0, 1)),
     rule_hits TEXT NOT NULL DEFAULT '[]',
     idempotency_key TEXT UNIQUE,

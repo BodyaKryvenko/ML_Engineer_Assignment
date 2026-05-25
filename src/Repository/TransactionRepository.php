@@ -10,7 +10,7 @@ final class TransactionRepository
 {
     private const COLUMNS = 'id, sender_id, receiver_id, amount, currency, status,
         sender_balance_before, sender_balance_after, receiver_balance_before, receiver_balance_after,
-        monitoring_status, is_suspicious, rule_hits, created_at';
+        monitoring_status, is_suspicious, risk_score, model_version, rule_hits, created_at';
 
     public function __construct(private readonly PDO $database)
     {
@@ -73,18 +73,28 @@ final class TransactionRepository
         return $transactions;
     }
 
-    public function saveMonitoringResult(int $id, array $ruleHits): void
+    public function saveMonitoringResult(
+        int $id,
+        array $ruleHits,
+        bool $isSuspicious,
+        float $riskScore,
+        string $modelVersion
+    ): void
     {
         $statement = $this->database->prepare(
             'UPDATE transactions
              SET monitoring_status = :monitoring_status,
                  is_suspicious = :is_suspicious,
+                 risk_score = :risk_score,
+                 model_version = :model_version,
                  rule_hits = :rule_hits
              WHERE id = :id'
         );
         $statement->execute([
             'monitoring_status' => 'completed',
-            'is_suspicious' => $ruleHits !== [] ? 1 : 0,
+            'is_suspicious' => $isSuspicious ? 1 : 0,
+            'risk_score' => $riskScore,
+            'model_version' => $modelVersion,
             'rule_hits' => json_encode($ruleHits, JSON_THROW_ON_ERROR),
             'id' => $id,
         ]);

@@ -7,6 +7,7 @@ use App\Event\SyncEventDispatcher;
 use App\Event\TransactionCreated;
 use App\Monitoring\FeatureExtractor;
 use App\Monitoring\MonitoringHandler;
+use App\Monitoring\MockInferenceClient;
 use App\Repository\FeatureRepository;
 use App\Repository\TransactionRepository;
 use Psr\Http\Message\ResponseInterface as Response;
@@ -19,7 +20,8 @@ $databasePath = getenv('DATABASE_PATH') ?: dirname(__DIR__) . '/var/database.sql
 $database = Connection::create($databasePath);
 $transactions = new TransactionRepository($database);
 $features = new FeatureRepository($database);
-$events = new SyncEventDispatcher(new MonitoringHandler($transactions, new FeatureExtractor($database), $features));
+$inference = new MockInferenceClient(dirname(__DIR__) . '/resources/models/fraud_model_custom.json');
+$events = new SyncEventDispatcher(new MonitoringHandler($transactions, new FeatureExtractor($database), $features, $inference));
 
 $app = AppFactory::create();
 $app->addBodyParsingMiddleware();

@@ -11,10 +11,13 @@ use RuntimeException;
 
 final class MonitoringHandler
 {
+    private const RISK_THRESHOLD = 0.7;
+
     public function __construct(
         private readonly TransactionRepository $transactions,
         private readonly FeatureExtractor $featureExtractor,
-        private readonly FeatureRepository $features
+        private readonly FeatureRepository $features,
+        private readonly InferenceClient $inference
     ) {
     }
 
@@ -28,6 +31,7 @@ final class MonitoringHandler
 
         $features = $this->featureExtractor->extract($transaction);
         $this->features->save($features);
+        $riskScore = $this->inference->predict($features);
 
         $ruleHits = [];
 
@@ -39,6 +43,14 @@ final class MonitoringHandler
             $ruleHits[] = 'ROUND_AMOUNT';
         }
 
-        $this->transactions->saveMonitoringResult($event->transactionId, $ruleHits);
+        $isSuspicious = $ruleHits !== [] || $riskScore >= self::RISK_THRESHOLD;
+
+        $this->transactions->saveMonitoringResult(
+            $event->transactionId,
+            $ruleHits,
+            $isSuspicious,
+            $riskScore,
+            $this->inference->modelVersion()
+        );
     }
 }

@@ -1,0 +1,12 @@
+{
+    "model_version": "fraud_logreg_custom",
+    "intercept": -3.0,
+    "weights": {
+        "amount": 0.000003,
+        "sender_tx_count_last_hour": 0.13,
+        "sender_tx_sum_last_24h": 0.000003,
+        "is_new_receiver": 0.3,
+        "night_transaction": 0.3
+    }
+}
+

@@ -18,6 +18,8 @@ CREATE TABLE IF NOT EXISTS transactions (
     receiver_balance_after INTEGER NOT NULL CHECK (receiver_balance_after >= 0),
     monitoring_status TEXT NOT NULL DEFAULT 'pending' CHECK (monitoring_status IN ('pending', 'completed')),
     is_suspicious INTEGER NOT NULL DEFAULT 0 CHECK (is_suspicious IN (0, 1)),
+    risk_score REAL CHECK (risk_score >= 0 AND risk_score <= 1),
+    model_version TEXT,
     rule_hits TEXT NOT NULL DEFAULT '[]',
     idempotency_key TEXT UNIQUE,
     request_hash TEXT,

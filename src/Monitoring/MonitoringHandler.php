@@ -6,6 +6,7 @@ namespace App\Monitoring;
 
 use App\Event\TransactionCreated;
 use App\Repository\FeatureRepository;
+use App\Repository\LabelRepository;
 use App\Repository\TransactionRepository;
 use RuntimeException;
 use Throwable;
@@ -18,6 +19,7 @@ final class MonitoringHandler
         private readonly TransactionRepository $transactions,
         private readonly FeatureExtractor $featureExtractor,
         private readonly FeatureRepository $features,
+        private readonly LabelRepository $labels,
         private readonly InferenceClient $inference
     ) {
     }
@@ -33,6 +35,7 @@ final class MonitoringHandler
 
             $features = $this->featureExtractor->extract($transaction);
             $this->features->save($features);
+            $this->labels->createUnknown($event->transactionId);
             $riskScore = $this->inference->predict($features);
 
             $ruleHits = [];

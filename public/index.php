@@ -9,6 +9,7 @@ use App\Monitoring\FeatureExtractor;
 use App\Monitoring\MonitoringHandler;
 use App\Monitoring\MockInferenceClient;
 use App\Repository\FeatureRepository;
+use App\Repository\LabelRepository;
 use App\Repository\TransactionRepository;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
@@ -20,8 +21,11 @@ $databasePath = getenv('DATABASE_PATH') ?: dirname(__DIR__) . '/var/database.sql
 $database = Connection::create($databasePath);
 $transactions = new TransactionRepository($database);
 $features = new FeatureRepository($database);
+$labels = new LabelRepository($database);
 $inference = new MockInferenceClient(dirname(__DIR__) . '/resources/models/fraud_model_custom.json');
-$events = new SyncEventDispatcher(new MonitoringHandler($transactions, new FeatureExtractor($database), $features, $inference));
+$events = new SyncEventDispatcher(
+    new MonitoringHandler($transactions, new FeatureExtractor($database), $features, $labels, $inference)
+);
 
 $app = AppFactory::create();
 $app->addBodyParsingMiddleware();
@@ -288,6 +292,62 @@ $app->get('/transactions/{id:[0-9]+}', function (Request $request, Response $res
     }
 
     $response->getBody()->write(json_encode($transaction, JSON_THROW_ON_ERROR));
+
+    return $response->withHeader('Content-Type', 'application/json');
+});
+
+$app->patch('/transactions/{id:[0-9]+}/label', function (Request $request, Response $response, array $args) use ($transactions, $labels): Response {
+    if ($transactions->find((int) $args['id']) === null) {
+        $response->getBody()->write(json_encode([
+            'error' => 'transaction not found',
+        ], JSON_THROW_ON_ERROR));
+
+        return $response
+            ->withHeader('Content-Type', 'application/json')
+            ->withStatus(404);
+    }
+
+    $body = $request->getParsedBody();
+
+    if (
+        !is_array($body)
+        || !isset($body['label'])
+        || !is_string($body['label'])
+        || !in_array($body['label'], ['legit', 'fraud'], true)
+    ) {
+        $response->getBody()->write(json_encode([
+            'error' => 'label must be legit or fraud',
+        ], JSON_THROW_ON_ERROR));
+
+        return $response
+            ->withHeader('Content-Type', 'application/json')
+            ->withStatus(422);
+    }
+
+    $label = $labels->update(
+        (int) $args['id'],
+        $body['label'],
+        isset($body['labelled_by']) && is_string($body['labelled_by']) ? $body['labelled_by'] : null,
+        isset($body['reason']) && is_string($body['reason']) ? $body['reason'] : null
+    );
+
+    if ($label === null) {
+        $response->getBody()->write(json_encode([
+            'error' => 'transaction has no extracted features to label',
+        ], JSON_THROW_ON_ERROR));
+
+        return $response
+            ->withHeader('Content-Type', 'application/json')
+            ->withStatus(409);
+    }
+
+    $response->getBody()->write(json_encode($label, JSON_THROW_ON_ERROR));
+
+    return $response->withHeader('Content-Type', 'application/json');
+});
+
+$app->get('/ml/training-dataset', function (Request $request, Response $response) use ($labels): Response {
+    $response->getBody()->write(json_encode($labels->trainingDataset(), JSON_THROW_ON_ERROR));
 
     return $response->withHeader('Content-Type', 'application/json');
 });

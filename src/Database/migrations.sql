@@ -49,3 +49,12 @@ CREATE TABLE IF NOT EXISTS transaction_features (
     created_at TEXT NOT NULL,
     FOREIGN KEY (transaction_id) REFERENCES transactions(id)
 );
+
+CREATE TABLE IF NOT EXISTS transaction_labels (
+    transaction_id INTEGER PRIMARY KEY,
+    label TEXT NOT NULL DEFAULT 'unknown' CHECK (label IN ('unknown', 'legit', 'fraud')),
+    labelled_by TEXT,
+    label_reason TEXT,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (transaction_id) REFERENCES transactions(id)
+);
